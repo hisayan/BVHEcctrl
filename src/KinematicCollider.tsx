@@ -9,7 +9,7 @@ import * as THREE from "three";
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import React, { useEffect, useRef, useMemo, useState, type ReactNode, forwardRef, type ForwardedRef, type RefObject, type JSX, useImperativeHandle } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
-import { MeshBVHHelper, StaticGeometryGenerator, MeshBVH, computeBoundsTree, disposeBoundsTree, acceleratedRaycast, SAH, type SplitStrategy } from "three-mesh-bvh";
+import { BVHHelper, StaticGeometryGenerator, MeshBVH, computeBoundsTree, disposeBoundsTree, acceleratedRaycast, SAH, type SplitStrategy } from "three-mesh-bvh";
 import { useEcctrlStore } from "./stores/useEcctrlStore";
 import { clamp } from "three/src/math/MathUtils";
 import { useHelper } from "@react-three/drei";
@@ -122,7 +122,7 @@ const KinematicCollider = forwardRef<THREE.Group, KinematicColliderProps>(({
         const mergedGeometry = staticGenerator.generate();
 
         // Create boundsTree and mesh from static geometry 
-        (mergedGeometry.computeBoundsTree as any) = computeBoundsTree
+        mergedGeometry.computeBoundsTree = computeBoundsTree
         mergedGeometry.disposeBoundsTree = disposeBoundsTree
         mergedGeometry.computeBoundsTree(BVHOptions)
         mergedMesh.current = new THREE.Mesh(mergedGeometry)
@@ -192,7 +192,8 @@ const KinematicCollider = forwardRef<THREE.Group, KinematicColliderProps>(({
     /**
      * Update BVH debug helper
      */
-    useHelper(debug && mergedMesh, MeshBVHHelper)
+    type BVHHelperConstructor = new (mesh: THREE.Mesh, depth?: number) => BVHHelper
+    useHelper<BVHHelperConstructor>(debug && mergedMesh, BVHHelper as unknown as BVHHelperConstructor, debugVisualizeDepth)
 
     /**
      * Update kinematic collider metrix for character collision and floating response

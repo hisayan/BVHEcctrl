@@ -8,7 +8,7 @@
 import * as THREE from "three";
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import React, { useEffect, useRef, type ReactNode, forwardRef, type RefObject, useImperativeHandle, } from "react";
-import { MeshBVHHelper, StaticGeometryGenerator, computeBoundsTree, disposeBoundsTree, SAH, type SplitStrategy, acceleratedRaycast } from "three-mesh-bvh";
+import { StaticGeometryGenerator, computeBoundsTree, disposeBoundsTree, SAH, type SplitStrategy, acceleratedRaycast, BVHHelper } from "three-mesh-bvh";
 import { useEcctrlStore } from "./stores/useEcctrlStore";
 import { useHelper } from "@react-three/drei";
 
@@ -103,7 +103,7 @@ const StaticCollider = forwardRef<THREE.Group, StaticColliderProps>(({
         const mergedGeometry = staticGenerator.generate();
 
         // Create boundsTree and mesh from static geometry 
-        (mergedGeometry.computeBoundsTree as any) = computeBoundsTree;
+        mergedGeometry.computeBoundsTree = computeBoundsTree;
         mergedGeometry.disposeBoundsTree = disposeBoundsTree
         mergedGeometry.computeBoundsTree(BVHOptions)
         mergedMesh.current = new THREE.Mesh(mergedGeometry)
@@ -158,7 +158,8 @@ const StaticCollider = forwardRef<THREE.Group, StaticColliderProps>(({
     /**
      * Update BVH debug helper
      */
-    useHelper(debug && mergedMesh, MeshBVHHelper)
+    type BVHHelperConstructor = new (mesh: THREE.Mesh, depth?: number) => BVHHelper
+    useHelper<BVHHelperConstructor>(debug && mergedMesh, BVHHelper as unknown as BVHHelperConstructor, debugVisualizeDepth)
 
     return (
         <group ref={colliderRef} {...props} dispose={null}>

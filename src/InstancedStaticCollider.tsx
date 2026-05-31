@@ -85,7 +85,7 @@ const InstancedStaticCollider = forwardRef<THREE.Group, StaticColliderProps>(({
             cleanGeom.applyMatrix4(mesh.matrixWorld);
 
             // Create boundsTree and mesh from clean geometry 
-            (cleanGeom.computeBoundsTree as any) = computeBoundsTree
+            cleanGeom.computeBoundsTree = computeBoundsTree
             cleanGeom.disposeBoundsTree = disposeBoundsTree
             cleanGeom.computeBoundsTree(BVHOptions)
 
@@ -122,7 +122,7 @@ const InstancedStaticCollider = forwardRef<THREE.Group, StaticColliderProps>(({
             }
             if (bvhHelper.current) {
                 scene.remove(bvhHelper.current);
-                (bvhHelper.current as any).dispose?.()
+                bvhHelper.current.dispose?.()
                 bvhHelper.current = null
             };
         };
