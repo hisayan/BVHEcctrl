@@ -321,7 +321,7 @@ const BVHEcctrl = forwardRef<BVHEcctrlApi, EcctrlProps>(({
      * Global store values
      * Getting all collider array from store
      */
-    const colliderMeshesArray = useEcctrlStore.getState().colliderMeshesArray;
+    const colliderMeshesArray = useEcctrlStore((state) => state.colliderMeshesArray);
     // Fitler meshes array for raycasting collision
     const floatRaycastCandidates = useMemo(() => colliderMeshesArray.filter((mesh) => mesh.geometry.boundsTree && !(mesh instanceof THREE.InstancedMesh)), [colliderMeshesArray]);
 

@@ -122,7 +122,7 @@ const KinematicCollider = forwardRef<THREE.Group, KinematicColliderProps>(({
         const mergedGeometry = staticGenerator.generate();
 
         // Create boundsTree and mesh from static geometry 
-        mergedGeometry.computeBoundsTree = computeBoundsTree
+        (mergedGeometry.computeBoundsTree as any) = computeBoundsTree
         mergedGeometry.disposeBoundsTree = disposeBoundsTree
         mergedGeometry.computeBoundsTree(BVHOptions)
         mergedMesh.current = new THREE.Mesh(mergedGeometry)
