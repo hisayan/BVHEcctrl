@@ -173,7 +173,10 @@ const BVHEcctrl = forwardRef<BVHEcctrlApi, EcctrlProps>(({
      * Update joystick state when joystickX/Y changes
      */
     useEffect(() => {
-        const unsubscribeJoystick = useJoystickStore.subscribe(({ joystickX, joystickY }) => joystickState.current.set(joystickX, joystickY));
+        const unsubscribeJoystick = useJoystickStore.subscribe(({ joystickX, joystickY, joystickRun }) => {
+            joystickState.current.set(joystickX, joystickY);
+            runState.current = joystickRun;
+        });
         return unsubscribeJoystick;
     }, []);
 

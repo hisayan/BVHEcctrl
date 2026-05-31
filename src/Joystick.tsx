@@ -58,6 +58,7 @@ const defaultJoystickKnobStyle: React.CSSProperties = {
 const Joystick = (props: JoystickProps) => {
     // Maximum radius for the joystick movement
     const joystickMaxRadius = props.joystickMaxRadius ?? 50
+    const joystickRunSensitivity = props.joystickRunSensitivity ?? 0.9
 
     // Refs for the joystick base and knob elements
     const baseRef = useRef<HTMLDivElement>(null);
@@ -100,6 +101,7 @@ const Joystick = (props: JoystickProps) => {
         let dx = x - centerX;
         let dy = y - centerY;
         const distance = Math.hypot(dx, dy);
+        const runState = distance > joystickMaxRadius * joystickRunSensitivity
         // If the distance exceeds the maximum radius, scale down the movement
         if (distance > joystickMaxRadius) {
             dx *= joystickMaxRadius / distance;
@@ -109,8 +111,8 @@ const Joystick = (props: JoystickProps) => {
         // Update the knob position
         knobRef.current.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
         // Update the joystick state in the store
-        setJoystick(dx / joystickMaxRadius, -dy / joystickMaxRadius);
-    }, [setJoystick])
+        setJoystick(dx / joystickMaxRadius, -dy / joystickMaxRadius, runState);
+    }, [joystickMaxRadius, joystickRunSensitivity, setJoystick])
 
     /**
      * Function to reset the joystick state
@@ -122,7 +124,7 @@ const Joystick = (props: JoystickProps) => {
     }, [resetJoystick])
 
     // Reset joystick when this component unmounts
-    useEffect(() => () => resetJoystick(), []);
+    useEffect(() => () => resetJoystick(), [resetJoystick]);
 
     return (
         <div
@@ -149,6 +151,7 @@ const Joystick = (props: JoystickProps) => {
 export default React.memo(Joystick)
 export interface JoystickProps {
     joystickMaxRadius?: number;
+    joystickRunSensitivity?: number;
     joystickWrapperStyle?: React.CSSProperties;
     joystickBaseStyle?: React.CSSProperties;
     joystickKnobStyle?: React.CSSProperties;

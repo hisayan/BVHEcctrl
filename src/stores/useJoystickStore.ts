@@ -12,7 +12,8 @@ export interface JoystickStoreState {
   joystickActive: boolean;
   joystickX: number;
   joystickY: number;
-  setJoystick: (x: number, y: number) => void;
+  joystickRun: boolean;
+  setJoystick: (x: number, y: number, run?: boolean) => void;
   resetJoystick: () => void;
 }
 
@@ -21,13 +22,15 @@ export const useJoystickStore = /* @__PURE__ */ create(
     joystickActive: false,
     joystickX: 0,
     joystickY: 0,
-    setJoystick: (x: number, y: number) =>
+    joystickRun: false,
+    setJoystick: (x: number, y: number, run = false) =>
       set({
         joystickActive: !(x === 0 && y === 0),
         joystickX: x,
         joystickY: y,
+        joystickRun: run,
       }),
     resetJoystick: () =>
-      set({ joystickActive: false, joystickX: 0, joystickY: 0 }),
+      set({ joystickActive: false, joystickX: 0, joystickY: 0, joystickRun: false }),
   }))
 );
