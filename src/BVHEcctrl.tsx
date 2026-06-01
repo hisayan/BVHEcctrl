@@ -88,6 +88,8 @@ const BVHEcctrl = forwardRef<BVHEcctrlApi, EcctrlProps>(({
     counterAccFactor = 0.5,
     airDragFactor = 0.3,
     jumpVel = 5,
+    jumpDelay = 300,
+    jumpLandingDelay = 100,
     // Float check props
     floatCheckType = "BOTH",
     maxSlope = 1,
@@ -118,7 +120,14 @@ const BVHEcctrl = forwardRef<BVHEcctrlApi, EcctrlProps>(({
     // const characterGroupRef = (ref as RefObject<THREE.Group>) ?? useRef<THREE.Group | null>(null);
     const characterColliderRef = useRef<THREE.Mesh | null>(null);
     const characterModelRef = useRef<THREE.Group | null>(null);
-    // Debug indicators meshes
+    // Jump delay and landing delay refs
+    const isJumpCharging = useRef(false);
+    const executeJump = useRef(false);
+    const wasOnGround = useRef(true);
+    const isLandingDamped = useRef(false);
+    const lastFallVelocity = useRef(0);
+    const isJumpInAirHold = useRef(false); // 飛び出し後のホールド保証フラグ
+   // Debug indicators meshes
     const debugBbox = useRef<THREE.Mesh | null>(null)
     const debugLineStart = useRef<THREE.Mesh | null>(null)
     const debugLineEnd = useRef<THREE.Mesh | null>(null)
@@ -1248,7 +1257,7 @@ const BVHEcctrl = forwardRef<BVHEcctrlApi, EcctrlProps>(({
             return isFalling.current ? "JUMP_FALL" : "JUMP_IDLE";
         }
     }, [])
-    const updateCharacterStatus = useCallback((run: boolean, jump: boolean) => {
+    const updateCharacterStatus = useCallback((run: boolean, patchedJump: boolean) => {
         // Update character control status
         characterModelRef.current?.getWorldPosition(characterStatus.position)
         characterModelRef.current?.getWorldQuaternion(characterStatus.quaternion)
@@ -1257,13 +1266,29 @@ const BVHEcctrl = forwardRef<BVHEcctrlApi, EcctrlProps>(({
         characterStatus.movingDir.copy(movingDir.current)
         characterStatus.isOnGround = isOnGround.current
         characterStatus.isOnMovingPlatform = isOnMovingPlatform.current
-        // Update character animation status
-        characterStatus.animationStatus = updateCharacterAnimation(run, jump)
+
+        // 1. まずはライブラリ本来のアニメーション判定（IDLE/WALK/RUN/空中など）をベースとして取得
+        let status : CharacterAnimationStatus = updateCharacterAnimation(run, patchedJump)
+
+        // 2. 🌟【優先順位の入れ替え】
+        // 長押しされた時は、着地(LAND)よりも次のジャンプの「溜め(START)」の見た目を最優先にする！
+        if (isJumpCharging.current || isJumpInAirHold.current) {
+            status = "JUMP_START"; 
+        } else if (isLandingDamped.current) {
+            status = "JUMP_LAND"; 
+        }
+        // 3. 最終決定したステートをライブラリのステータスに代入
+        characterStatus.animationStatus = status
+
+        // 4. 元からある重複チェックロジックを通して、Zustandのストアに安全に通知
         if (prevAnimation.current !== characterStatus.animationStatus) {
             useAnimationStore.getState().setAnimationStatus(characterStatus.animationStatus)
             prevAnimation.current = characterStatus.animationStatus
-        }
-    }, [])
+        }        
+    }, []
+
+
+)
 
     /**
      * Bind controller functions to ref
@@ -1358,7 +1383,9 @@ const BVHEcctrl = forwardRef<BVHEcctrlApi, EcctrlProps>(({
         const leftward = leftwardState.current || keys.leftward;
         const rightward = rightwardState.current || keys.rightward;
         const run = runState.current || keys.run || buttons.run;
-        const jump = jumpState.current || keys.jump || buttons.jump;
+
+        // 1. 一番元の「生の入力」を rawJump として受け取る
+        const rawJump = jumpState.current || keys.jump || buttons.jump;        
 
         /**
          * Handle character movement input
@@ -1366,8 +1393,51 @@ const BVHEcctrl = forwardRef<BVHEcctrlApi, EcctrlProps>(({
         setInputDirection({ forward, backward, leftward, rightward, joystick: joystickState.current })
         // Apply user input to character moving velocity
         handleCharacterMovement(run, deltaTime)
-        // Character jump input
-        if (jump && isOnGround.current) currentLinVel.current.y = jumpVel
+
+
+        // ⏳ 【JUMP_START】物理の前に割り込む「最初」のディレイ
+        if (rawJump && isOnGround.current && !isJumpCharging.current) {
+            isJumpCharging.current = true;
+            isJumpInAirHold.current = false; // 🌟【2回目対策】次の溜めが始まったら、前回の残骸を完全強制リセット
+            setTimeout(() => {
+                executeJump.current = true;
+            }, jumpDelay);
+        }
+
+        // Delay 経ったらY軸に速度を適用
+        if (executeJump.current) {
+            currentLinVel.current.y = jumpVel;
+            executeJump.current = false;
+            isJumpCharging.current = false;
+            
+            // 🚀 「ここから離陸するまでホールドしてね」の合図を出す
+            isJumpInAirHold.current = true;
+        }        
+
+        // 🌟【条件の修正：完全な空中脱出、または落下開始までホールド】
+        if (isJumpInAirHold.current) {
+            const hasLeftSensorRange = globalMinDistance.current === Infinity; // センサーが完全に地面を見失った
+            const isFallingDown = currentLinVel.current.y < 0;                 // 上昇が終わり落下に転じた
+            
+            if (hasLeftSensorRange || isFallingDown) {
+                isJumpInAirHold.current = false;
+            }
+        }
+
+        // 3. 他の関数たちを騙すための「偽装ジャンプフラグ」を作る
+        let patchedJump = false;
+
+        if (isJumpCharging.current) {
+            // ① 溜め中は、物理を動かさないために false
+            patchedJump = false;
+        } else if (isJumpInAirHold.current) {
+            // ② 飛び出した直後は、キーを離していても強制的に true にして上昇を保護！
+            patchedJump = true;
+        } else {
+            // ③ それ以降は、プレイヤーの現在の生の長押し状態（rawJump）をそのまま流す（可変ジャンプ用）
+            patchedJump = rawJump;
+        }
+
         // Update character moving diretion
         movingDir.current.copy(currentLinVel.current).normalize()
         // Update character current linear velocity on up axis plane
@@ -1377,7 +1447,7 @@ const BVHEcctrl = forwardRef<BVHEcctrlApi, EcctrlProps>(({
          * Check if character is sleeping,
          * If so, pause functions to save performance
          */
-        checkCharacterSleep(jump, deltaTime)
+        checkCharacterSleep(patchedJump, deltaTime)
         if (!isSleeping.current) {
             /**
              * Apply custom gravity to character current velocity
@@ -1398,7 +1468,20 @@ const BVHEcctrl = forwardRef<BVHEcctrlApi, EcctrlProps>(({
             /**
              * Handle character floating response
              */
-            handleFloatingResponse(colliderMeshesArray, jump, deltaTime)
+            handleFloatingResponse(colliderMeshesArray, patchedJump, deltaTime)
+
+            // 🌟【新設：長押し用の着地即溜め割り込みロジック】
+            // 接地が確定したこのフレームのこの瞬間、Spaceが押しっぱなしなら
+            // 1フレームの無駄もなく、即座に2回目の溜めタイマーをここから始動する！
+            if (isOnGround.current && !prevIsOnGround.current) {
+                if (rawJump && !isJumpCharging.current && !isJumpInAirHold.current) {
+                    isJumpCharging.current = true;
+                    isJumpInAirHold.current = false;
+                    setTimeout(() => {
+                        executeJump.current = true;
+                    }, jumpDelay); // 即座に2回目のタイマー開始
+                }
+            }
 
             /**
              * Update character position and rotation with moving platform
@@ -1414,13 +1497,33 @@ const BVHEcctrl = forwardRef<BVHEcctrlApi, EcctrlProps>(({
             /**
              * Update character status for exporting
              */
-            updateCharacterStatus(run, jump)
+            updateCharacterStatus(run, patchedJump)
 
             /**
              * Save previous grounded state
              */
-            prevIsOnGround.current = isOnGround.current
+            // prevIsOnGround.current = isOnGround.current
         }
+
+        // ⏳ 【JUMP_LAND】すべての物理・ステート更新が終わった「最後」のディレイ
+        // 着地した瞬間を検知（スリープ状態やブロックに関わらず、ここで1本化して確実にフックする）
+        if (isOnGround.current && !prevIsOnGround.current) {
+            
+            // 🌟【超重要：離陸直後の誤検知を100%シャットアウトするガード】
+            // ジャンプの溜め中、または飛び出してまだ空中に抜け切っていないホールド期間中は、
+            // 接地フラグがガタついても「着地（LAND）」として絶対に認めない！
+            if (!isJumpCharging.current && !isJumpInAirHold.current) {
+                isLandingDamped.current = true;
+                executeJump.current = false;
+
+                setTimeout(() => {
+                    isLandingDamped.current = false;
+                }, jumpLandingDelay); 
+            }
+        }
+
+        // 前回の接地状態をここで保存
+        prevIsOnGround.current = isOnGround.current;
 
         /**
          * Update debug indicators
@@ -1534,6 +1637,8 @@ export interface EcctrlProps extends Omit<React.ComponentProps<'group'>, 'ref'> 
     counterAccFactor?: number;
     airDragFactor?: number;
     jumpVel?: number;
+    jumpDelay?: number;
+    jumpLandingDelay?: number;
     floatCheckType?: FloatCheckType;
     maxSlope?: number;
     floatHeight?: number;
