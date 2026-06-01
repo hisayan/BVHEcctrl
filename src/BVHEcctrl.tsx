@@ -127,7 +127,12 @@ const BVHEcctrl = forwardRef<BVHEcctrlApi, EcctrlProps>(({
     const isLandingDamped = useRef(false);
     const lastFallVelocity = useRef(0);
     const isJumpInAirHold = useRef(false); // 飛び出し後のホールド保証フラグ
-   // Debug indicators meshes
+    const hasJumpedAndNotSettled = useRef(false); // 空中ジャンプ防止ロックフラグ
+    const jumpChargeTimer = useRef(0);  // 溜め時間の蓄積用 (秒)
+    const landingDampTimer = useRef(0); // 着地硬直時間の残量用 (秒)
+    const airHoldTimer = useRef(0);    // 離陸ホールド時間の残量用 (秒)    
+    const justLaunchedThisFrame = useRef(false);
+    // Debug indicators meshes
     const debugBbox = useRef<THREE.Mesh | null>(null)
     const debugLineStart = useRef<THREE.Mesh | null>(null)
     const debugLineEnd = useRef<THREE.Mesh | null>(null)
@@ -1395,49 +1400,73 @@ const BVHEcctrl = forwardRef<BVHEcctrlApi, EcctrlProps>(({
         handleCharacterMovement(run, deltaTime)
 
 
-        // ⏳ 【JUMP_START】物理の前に割り込む「最初」のディレイ
-        if (rawJump && isOnGround.current && !isJumpCharging.current) {
-            isJumpCharging.current = true;
-            isJumpInAirHold.current = false; // 🌟【2回目対策】次の溜めが始まったら、前回の残骸を完全強制リセット
-            setTimeout(() => {
-                executeJump.current = true;
-            }, jumpDelay);
+        // ⏳【フレーム同期タイマーの更新処理】
+        // ① 着地硬直タイマーの減算
+        if (landingDampTimer.current > 0) {
+            landingDampTimer.current -= deltaTime;
+            if (landingDampTimer.current <= 0) {
+                landingDampTimer.current = 0;
+                isLandingDamped.current = false;
+            }
         }
 
-        // Delay 経ったらY軸に速度を適用
+        // ② ジャンプ溜めタイマーの加算
+        if (isJumpCharging.current) {
+            jumpChargeTimer.current += deltaTime;
+
+            if (jumpChargeTimer.current >= (jumpDelay / 1000)) { 
+                jumpChargeTimer.current = 0;
+                isJumpCharging.current = false;
+                executeJump.current = true; 
+            }
+        }
+
+
+        // ⏳ 【JUMP_START】物理の前に割り込む「最初」のディレイトリガー
+        if (rawJump && isOnGround.current && !isJumpCharging.current && !hasJumpedAndNotSettled.current && !isLandingDamped.current) {
+            isJumpCharging.current = true;
+            jumpChargeTimer.current = 0; 
+            isJumpInAirHold.current = false; 
+        }
+
+        // 時間が満ちた「まさにこのフレーム」で、安全にY軸に速度を適用（離陸！）
         if (executeJump.current) {
             currentLinVel.current.y = jumpVel;
             executeJump.current = false;
             isJumpCharging.current = false;
             
-            // 🚀 「ここから離陸するまでホールドしてね」の合図を出す
-            isJumpInAirHold.current = true;
+            isJumpInAirHold.current = true;  
+            airHoldTimer.current = 0.1;           // 離陸ホールド時間を100msにセット
+            hasJumpedAndNotSettled.current = true; // 空中ロックを展開
+
+            justLaunchedThisFrame.current = true; // 離陸したこのフレームだけtrueになるフラグ
         }        
 
-        // 🌟【条件の修正：完全な空中脱出、または落下開始までホールド】
+        // 【物理的なホールド解除条件の更新】
         if (isJumpInAirHold.current) {
-            const hasLeftSensorRange = globalMinDistance.current === Infinity; // センサーが完全に地面を見失った
-            const isFallingDown = currentLinVel.current.y < 0;                 // 上昇が終わり落下に転じた
+            airHoldTimer.current -= deltaTime; 
             
-            if (hasLeftSensorRange || isFallingDown) {
+            const hasLeftSensorRange = globalMinDistance.current === Infinity;
+            const isFallingDown = currentLinVel.current.y < 0;
+            
+            if (hasLeftSensorRange || isFallingDown || airHoldTimer.current <= 0) {
                 isJumpInAirHold.current = false;
+                airHoldTimer.current = 0;
             }
         }
 
-        // 3. 他の関数たちを騙すための「偽装ジャンプフラグ」を作る
+        // 他の関数たちを騙すための「patchedJump」の決定
         let patchedJump = false;
-
-        if (isJumpCharging.current) {
-            // ① 溜め中は、物理を動かさないために false
-            patchedJump = false;
-        } else if (isJumpInAirHold.current) {
-            // ② 飛び出した直後は、キーを離していても強制的に true にして上昇を保護！
-            patchedJump = true;
+        if (isJumpCharging.current || isLandingDamped.current) {
+            // 溜め中・着地硬直中は、ライブラリの接地フラグ強制破壊バグを防ぐため、完全に false で封じ込める！
+            patchedJump = false; 
+        } else if (hasJumpedAndNotSettled.current) {
+            // 一度離陸して空中にいる間は、空中スプリングの異常推進力をカットするために true 固定
+            patchedJump = true;  
         } else {
-            // ③ それ以降は、プレイヤーの現在の生の長押し状態（rawJump）をそのまま流す（可変ジャンプ用）
-            patchedJump = rawJump;
+            // それ以外の通常時のみ生の入力を流す
+            patchedJump = rawJump; 
         }
-
         // Update character moving diretion
         movingDir.current.copy(currentLinVel.current).normalize()
         // Update character current linear velocity on up axis plane
@@ -1470,17 +1499,17 @@ const BVHEcctrl = forwardRef<BVHEcctrlApi, EcctrlProps>(({
              */
             handleFloatingResponse(colliderMeshesArray, patchedJump, deltaTime)
 
-            // 🌟【新設：長押し用の着地即溜め割り込みロジック】
-            // 接地が確定したこのフレームのこの瞬間、Spaceが押しっぱなしなら
-            // 1フレームの無駄もなく、即座に2回目の溜めタイマーをここから始動する！
-            if (isOnGround.current && !prevIsOnGround.current) {
-                if (rawJump && !isJumpCharging.current && !isJumpInAirHold.current) {
-                    isJumpCharging.current = true;
-                    isJumpInAirHold.current = false;
-                    setTimeout(() => {
-                        executeJump.current = true;
-                    }, jumpDelay); // 即座に2回目のタイマー開始
-                }
+
+            // すべての物理計算（コライダー押し戻し、地上スプリングなど）が終了した「位置移動の直前」に割り込む！
+            if (isJumpCharging.current) {
+                // 溜め期間中は垂直移動を 0 に完全固定
+                currentLinVel.current.y = 0;
+            } else if (justLaunchedThisFrame.current) {
+                // 🚀 離陸したまさにその1フレーム目の最後、
+                // 横移動の間に床コライダーへ溜まりに溜まったランダムな「めり込み押し戻しフォース」を完全に上書き消去！
+                // 純粋な設計値である jumpVel だけを強制再代入して、位置の加算処理へと流す。
+                currentLinVel.current.y = jumpVel;
+                justLaunchedThisFrame.current = false; // 次のフレームからは通常の重力放物線に完全に任せる
             }
 
             /**
@@ -1504,22 +1533,19 @@ const BVHEcctrl = forwardRef<BVHEcctrlApi, EcctrlProps>(({
              */
             // prevIsOnGround.current = isOnGround.current
         }
-
-        // ⏳ 【JUMP_LAND】すべての物理・ステート更新が終わった「最後」のディレイ
-        // 着地した瞬間を検知（スリープ状態やブロックに関わらず、ここで1本化して確実にフックする）
+        
+        // ⏳ 【JUMP_LAND】すべての物理が終わったループの「最後」の判定
         if (isOnGround.current && !prevIsOnGround.current) {
-            
-            // 🌟【超重要：離陸直後の誤検知を100%シャットアウトするガード】
-            // ジャンプの溜め中、または飛び出してまだ空中に抜け切っていないホールド期間中は、
-            // 接地フラグがガタついても「着地（LAND）」として絶対に認めない！
             if (!isJumpCharging.current && !isJumpInAirHold.current) {
                 isLandingDamped.current = true;
+                landingDampTimer.current = jumpLandingDelay / 1000; 
                 executeJump.current = false;
-
-                setTimeout(() => {
-                    isLandingDamped.current = false;
-                }, jumpLandingDelay); 
             }
+        }
+
+        // 空中ジャンプ防止ロックの完全解除判定
+        if (isOnGround.current && !isJumpInAirHold.current) {
+            hasJumpedAndNotSettled.current = false;
         }
 
         // 前回の接地状態をここで保存
